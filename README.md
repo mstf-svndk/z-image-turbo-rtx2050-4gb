@@ -9,10 +9,9 @@ This is a derivative of **[Sinirsiz Foto](https://github.com/alexturkey/z-image-
 What is different here: the engine is compiled for sm_86 instead of sm_61, the Pascal-only kernel patches are left
 out, and setup/generate check the card's compute capability.
 
-> **Honest label.** The engine here is *compiled* for the RTX 2050, but **no picture has been measured on that card
-> yet**. The only measured numbers are the upstream ones on a GTX 1050 Ti: 193–228 s per 768x1344 picture, GPU peak
-> ~3.0 GB, process RAM ~10.7 GB. If your run differs, that is expected and it is not an error; `run.json` records
-> what happened.
+> **Measured on RTX 2050 (4 GB, driver 566.03, 32 GB RAM):** first verified `768x1344` run (`prompts/eiffel.txt`, seed 42,
+> 8 steps, `--vae auto`) completed in **57.1 s** (`text_encode` 1.75 s, `sampling` 44.15 s, `vae_decode` 7.50 s via
+> cuDNN 2-tile `768x1024`), GPU peak **2985 MiB**. See `docs/MEASUREMENTS.md`.
 
 ## What you need
 
@@ -30,6 +29,13 @@ cd z-image-turbo-rtx2050-4gb
 python scripts/setup.py
 python scripts/generate.py --prompt-file prompts/eiffel.txt
 ```
+
+Or launch the local web interface (no extra packages needed):
+
+```bat
+python scripts/ui.py
+```
+(Or double-click `Baslat.cmd` on Windows — opens `http://127.0.0.1:7860` in your browser.)
 
 `setup.py` first prints a **Preflight** block (your GPU, compute capability, driver, RAM, free disk). It downloads
 the three model files (~11 GB), the engine zip and the CUDA 12.8 runtime, verifies every file with sha256, and
@@ -70,8 +76,8 @@ to pre-download the 11 GB of models on a slow line). It is not a "lighter engine
 
 ## Limits (read before you rely on it)
 
-- **No measurement on the RTX 2050 yet.** Only the upstream GTX 1050 Ti numbers exist. Do not quote them as this
-  card's speed.
+- **Single-run RTX 2050 measurement:** `768x1344` (`prompts/eiffel.txt`, seed 42, 8 steps, `--vae auto`) completed
+  in 57.1 s (2985 MiB VRAM peak). Other sizes/prompts and repeat-run pixel determinism have not been measured here yet.
 - **sm_86 only.** The engine carries compute-86 kernels; another architecture gives
   `no kernel image is available for execution on the device`. Use the upstream repository or build your own engine
   (`docs/BUILD.md`).
@@ -106,5 +112,5 @@ Derivative of [alexturkey/z-image-turbo-pascal-4gb](https://github.com/alexturke
 (Apache-2.0) rebuilt for **sm_86 / Ampere / 4 GB** (reference card: RTX 2050 laptop). The engine is built in CI
 (`.github/workflows/build-engine.yml`) and published as a release asset; `scripts/setup.py` verifies every download
 with sha256 and checks the GPU's compute capability; `scripts/generate.py` runs the upstream 4 GB recipe unchanged.
-**The RTX 2050 has not been measured yet** — the only measured numbers are upstream's on a GTX 1050 Ti. Windows,
+**First RTX 2050 measurement:** `57.1 s` for one `768x1344` image (`2985 MiB` VRAM peak, cuDNN tiled VAE). Windows,
 NVIDIA, Python 3.10+, ~14 GB disk.

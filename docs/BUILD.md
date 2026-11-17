@@ -57,7 +57,7 @@ This order applies cleanly on the base above (checked with `git apply` on a clea
 Download NVIDIA's archive (no sign-in needed) and unpack it:
 
 ```
-https://developer.download.nvidia.com/compute/cudnn/redist/cudnn/windows-x86_64/cudnn-windows-x86_64-9.10.2.21_cuda11-archive.zip
+https://developer.download.nvidia.com/compute/cudnn/redist/cudnn/windows-x86_64/cudnn-windows-x86_64-9.10.2.21_cuda12-archive.zip
 ```
 
 `CUDNN_ROOT` is the folder that contains `include\cudnn.h` and `lib\x64\cudnn.lib`. Only `conv2d.cu` gets these

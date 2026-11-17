@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased (2026-11-17)
+
+- **cuDNN CUDA 12 fix:** switched `models.lock.json`, `.github/workflows/build-engine.yml`, `THIRD_PARTY.md`, and `docs/BUILD.md` from `cudnn-windows-x86_64-9.10.2.21_cuda11-archive.zip` to `cudnn-windows-x86_64-9.10.2.21_cuda12-archive.zip` (the CUDA 11 archive required `cublasLt64_11.dll` at VAE decode time and crashed with `cudart-cuda12.8-win-x64.zip`).
+- `scripts/setup.py`: added an optional `certifi` fallback in `_open()` when Windows' built-in certificate store fails SSL verification on GitHub release CDNs (`SSL: CERTIFICATE_VERIFY_FAILED`), keeping zero required external dependencies.
+- Added local web UI (`scripts/ui.py`) and Windows launcher (`Baslat.cmd`) using Python standard library only.
+- Recorded first measured run on NVIDIA GeForce RTX 2050 4 GB (`57.1 s` total, `2985 MiB` peak VRAM, `7.50 s` cuDNN tiled VAE decode) in `docs/MEASUREMENTS.md`.
+
 ## v0.1.0 (2026-11-16)
 
 First build for Ampere / sm_86, derived from Sinirsiz Foto v0.2.0 (Apache-2.0).

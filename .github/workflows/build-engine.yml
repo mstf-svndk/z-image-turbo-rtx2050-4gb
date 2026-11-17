@@ -27,7 +27,7 @@ jobs:
       SDCPP_REPO: https://github.com/leejet/stable-diffusion.cpp.git
       SDCPP_COMMIT: 32d516c
       GGML_COMMIT: d803c23
-      CUDNN_URL: https://developer.download.nvidia.com/compute/cudnn/redist/cudnn/windows-x86_64/cudnn-windows-x86_64-9.10.2.21_cuda11-archive.zip
+      CUDNN_URL: https://developer.download.nvidia.com/compute/cudnn/redist/cudnn/windows-x86_64/cudnn-windows-x86_64-9.10.2.21_cuda12-archive.zip
       CUDA_ARCH: "86"
 
     steps:

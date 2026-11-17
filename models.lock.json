@@ -55,56 +55,56 @@
     }
   ],
   "cudnn": {
-    "name": "cudnn-windows-x86_64-9.10.2.21_cuda11-archive.zip",
+    "name": "cudnn-windows-x86_64-9.10.2.21_cuda12-archive.zip",
     "role": "optional: NVIDIA cuDNN runtime DLLs for the fast, more exact VAE decode. Not stored in this repository or its releases; downloaded from NVIDIA after the user accepts NVIDIA's license",
-    "version": "9.10.2.21 (cuda11 build; the only build we measured)",
-    "url": "https://developer.download.nvidia.com/compute/cudnn/redist/cudnn/windows-x86_64/cudnn-windows-x86_64-9.10.2.21_cuda11-archive.zip",
-    "bytes": 384728540,
-    "sha256": "dc837ef00beffab937979ba5a72c27facd0443c7e3fa71fc7c2e29adf5262f36",
+    "version": "9.10.2.21 (cuda12 build for CUDA 12.8 runtime)",
+    "url": "https://developer.download.nvidia.com/compute/cudnn/redist/cudnn/windows-x86_64/cudnn-windows-x86_64-9.10.2.21_cuda12-archive.zip",
+    "bytes": 683336095,
+    "sha256": "c1a4567d822ebda7373fa1f19255dff4942302de741f830160b6c7d1fb31af23",
     "license": "NVIDIA Software Development Kits license + cuDNN Supplement (proprietary)",
     "license_url": "https://docs.nvidia.com/deeplearning/cudnn/backend/latest/reference/eula.html",
-    "license_member": "cudnn-windows-x86_64-9.10.2.21_cuda11-archive/LICENSE",
+    "license_member": "cudnn-windows-x86_64-9.10.2.21_cuda12-archive/LICENSE",
     "license_save_as": "NVIDIA_cuDNN_LICENSE.txt",
     "members": [
       {
-        "path": "cudnn-windows-x86_64-9.10.2.21_cuda11-archive/bin/cudnn64_9.dll",
-        "bytes": 266296,
-        "crc32": "a6add953"
+        "path": "cudnn-windows-x86_64-9.10.2.21_cuda12-archive/bin/cudnn64_9.dll",
+        "bytes": 266288,
+        "crc32": "b2cd1a91"
       },
       {
-        "path": "cudnn-windows-x86_64-9.10.2.21_cuda11-archive/bin/cudnn_adv64_9.dll",
-        "bytes": 168971296,
-        "crc32": "7c17dedb"
+        "path": "cudnn-windows-x86_64-9.10.2.21_cuda12-archive/bin/cudnn_adv64_9.dll",
+        "bytes": 282445872,
+        "crc32": "aeaefc11"
       },
       {
-        "path": "cudnn-windows-x86_64-9.10.2.21_cuda11-archive/bin/cudnn_cnn64_9.dll",
-        "bytes": 3929632,
-        "crc32": "a17fe874"
+        "path": "cudnn-windows-x86_64-9.10.2.21_cuda12-archive/bin/cudnn_cnn64_9.dll",
+        "bytes": 4618272,
+        "crc32": "ab9978b8"
       },
       {
-        "path": "cudnn-windows-x86_64-9.10.2.21_cuda11-archive/bin/cudnn_engines_precompiled64_9.dll",
-        "bytes": 272844320,
-        "crc32": "0c64d7d9"
+        "path": "cudnn-windows-x86_64-9.10.2.21_cuda12-archive/bin/cudnn_engines_precompiled64_9.dll",
+        "bytes": 513926688,
+        "crc32": "6c6818f2"
       },
       {
-        "path": "cudnn-windows-x86_64-9.10.2.21_cuda11-archive/bin/cudnn_engines_runtime_compiled64_9.dll",
-        "bytes": 18143776,
-        "crc32": "08b68e9b"
+        "path": "cudnn-windows-x86_64-9.10.2.21_cuda12-archive/bin/cudnn_engines_runtime_compiled64_9.dll",
+        "bytes": 20201008,
+        "crc32": "f5dbb100"
       },
       {
-        "path": "cudnn-windows-x86_64-9.10.2.21_cuda11-archive/bin/cudnn_graph64_9.dll",
-        "bytes": 2393632,
-        "crc32": "19523c23"
+        "path": "cudnn-windows-x86_64-9.10.2.21_cuda12-archive/bin/cudnn_graph64_9.dll",
+        "bytes": 2420256,
+        "crc32": "4e6cdfe5"
       },
       {
-        "path": "cudnn-windows-x86_64-9.10.2.21_cuda11-archive/bin/cudnn_heuristic64_9.dll",
-        "bytes": 56803376,
-        "crc32": "8aaadb8d"
+        "path": "cudnn-windows-x86_64-9.10.2.21_cuda12-archive/bin/cudnn_heuristic64_9.dll",
+        "bytes": 56823328,
+        "crc32": "61b13974"
       },
       {
-        "path": "cudnn-windows-x86_64-9.10.2.21_cuda11-archive/bin/cudnn_ops64_9.dll",
-        "bytes": 69195320,
-        "crc32": "b58eb6fb"
+        "path": "cudnn-windows-x86_64-9.10.2.21_cuda12-archive/bin/cudnn_ops64_9.dll",
+        "bytes": 126508576,
+        "crc32": "25c727ab"
       }
     ]
   }

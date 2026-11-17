@@ -36,6 +36,7 @@ import hashlib
 import json
 import os
 import shutil
+import ssl
 import subprocess
 import sys
 import time
@@ -90,7 +91,18 @@ def _open(url, start):
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     if start > 0:
         req.add_header("Range", "bytes=%d-" % start)
-    return urllib.request.urlopen(req, timeout=60)
+    try:
+        return urllib.request.urlopen(req, timeout=60)
+    except urllib.error.URLError as e:
+        # Windows' built-in store can miss intermediate CA certs for GitHub release CDNs; fall back to certifi if installed.
+        if isinstance(getattr(e, "reason", None), ssl.SSLCertVerificationError):
+            try:
+                import certifi
+            except ImportError:
+                raise e
+            ctx = ssl.create_default_context(cafile=certifi.where())
+            return urllib.request.urlopen(req, timeout=60, context=ctx)
+        raise
 
 
 def download(url, dest, size, sha256, label=None):
