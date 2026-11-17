@@ -1,0 +1,45 @@
+SPDX-License-Identifier: MIT
+Copyright 2026 Ali Haydar Ozturk. Derived from stable-diffusion.cpp / ggml (MIT).
+Subject: 0025-vae-tile-floor
+VAE decode: with env SD_VAE_TILE_FLOOR=1 a requested tile that runs out of memory falls back once to half the latent instead of half the requested tile. Default off.
+
+diff --git a/src/pipeline/diffusion_engine.cpp b/src/pipeline/diffusion_engine.cpp
+index 5666680..3d92b2c 100644
+--- a/src/pipeline/diffusion_engine.cpp
++++ b/src/pipeline/diffusion_engine.cpp
+@@ -3050,6 +3050,11 @@ sd::Tensor<float> StableDiffusionGGML::decode_first_stage(const sd::Tensor<float
+     auto tiling_params                = first_stage_model->resolve_tiling_params(vae_tiling_params);
+     const bool prefer_temporal_tiling = decode_video && latents.dim() == 5 && latents.shape()[2] > 1 &&
+                                         first_stage_model->can_temporal_tile_decode();
++    // SD_VAE_TILE_FLOOR=1 (default off): an explicitly requested VAE tile that runs out of memory is replaced ONCE by half the latent on both
++    // axes (what a full-latent decode falls back to anyway) instead of "half of the requested tile", which can end up smaller and worse. See patch 0025.
++    const char* tile_floor_env  = std::getenv("SD_VAE_TILE_FLOOR");
++    const bool tile_floor_on    = tile_floor_env != nullptr && std::atoi(tile_floor_env) > 0;
++    bool tile_floor_applied     = false;
+     for (;;) {
+         int tile_size_w = static_cast<int>(latents.shape()[0]);
+         int tile_size_h = static_cast<int>(latents.shape()[1]);
+@@ -3060,6 +3065,23 @@ sd::Tensor<float> StableDiffusionGGML::decode_first_stage(const sd::Tensor<float
+             return {};
+         }
+         auto decoded = first_stage_model->decode(n_threads, latents, tiling_params, decode_video, circular_x, circular_y);
++        if (decoded.empty() && tile_floor_on && !tile_floor_applied && tiling_params.enabled && !prefer_temporal_tiling &&
++            first_stage_model->last_compute_status() == GGML_STATUS_ALLOC_FAILED &&
++            (tile_size_w < latents.shape()[0] || tile_size_h < latents.shape()[1])) {
++            tile_floor_applied  = true;
++            const int scale     = first_stage_model->get_scale_factor();
++            const int floor_w   = std::max(4, static_cast<int>((latents.shape()[0] + 1) / 2));
++            const int floor_h   = std::max(4, static_cast<int>((latents.shape()[1] + 1) / 2));
++            if (floor_w < tile_size_w || floor_h < tile_size_h) {
++                LOG_WARN("VAE decode tile %dx%d image pixels ran out of memory; falling back to the default-equivalent tile %dx%d (half latent)",
++                         tile_size_w * scale, tile_size_h * scale, floor_w * scale, floor_h * scale);
++                tiling_params.rel_size_w  = 0.0f;
++                tiling_params.rel_size_h  = 0.0f;
++                tiling_params.tile_size_w = floor_w * scale;
++                tiling_params.tile_size_h = floor_h * scale;
++                continue;
++            }
++        }
+         if (sd_version_is_minimax_h3_image(version) && !decoded.empty() && decoded.dim() == 5) {
+             decoded = decoded.squeeze(2);
+         }

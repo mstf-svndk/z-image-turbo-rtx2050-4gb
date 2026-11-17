@@ -1,0 +1,31 @@
+SPDX-License-Identifier: MIT
+Copyright 2026 Ali Haydar Ozturk. Derived from stable-diffusion.cpp / ggml (MIT).
+Subject: 0029-capacity-log
+Diagnostic: env SD_CAPACITY_LOG=1 logs one line (need / available / residual MB) per VRAM capacity check. Default off.
+
+diff --git a/src/model_manager.cpp b/src/model_manager.cpp
+index e4be8d3..13498f8 100644
+--- a/src/model_manager.cpp
++++ b/src/model_manager.cpp
+@@ -1885,6 +1885,21 @@ ModelManager::CapacityCheck ModelManager::check_capacity(
+             result.available_budget_bytes = std::min(result.available_budget_bytes, available);
+         }
+     }
++    // Diagnostic (speed work, 0029): SD_CAPACITY_LOG=1 prints one line per capacity check, also when it succeeds. Unset = unchanged.
++    {
++        static const bool capacity_log = [] {
++            const char* e = std::getenv("SD_CAPACITY_LOG");
++            return e != nullptr && e[0] != '\0' && e[0] != '0';
++        }();
++        if (capacity_log && result.available_device_bytes != SIZE_MAX) {
++            const double need_mb  = result.required_device_bytes / (1024.0 * 1024.0);
++            const double avail_mb = result.available_device_bytes / (1024.0 * 1024.0);
++            LOG_WARN("CAPACITY need %.1f MB (pending %.1f + missing %.1f + margin %.1f) / available %.1f MB / residual %.1f MB / %s",
++                     need_mb, request.pending_allocation_bytes / (1024.0 * 1024.0), missing / (1024.0 * 1024.0),
++                     (need_mb - request.pending_allocation_bytes / (1024.0 * 1024.0) - missing / (1024.0 * 1024.0)),
++                     avail_mb, avail_mb - need_mb, avail_mb >= need_mb ? "FITS" : "SHORT");
++        }
++    }
+     return result;
+ }
+ 

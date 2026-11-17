@@ -1,0 +1,26 @@
+z-image-turbo-rtx2050-4gb
+
+A derivative work of "Sınırsız Foto" (z-image-turbo-pascal-4gb):
+Copyright 2026 Ali Haydar Öztürk (Ozturk)
+https://github.com/alexturkey/z-image-turbo-pascal-4gb
+
+Modifications for sm_86 / Ampere / 4 GB (engine build target, patch selection,
+compute capability checks): Copyright 2026 Mustafa Sevindik
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+The engine patches under patches/ are derived from stable-diffusion.cpp and
+ggml and are licensed under the MIT License (patches/LICENSE-MIT), so that
+they can be offered back to those projects.
+
+Third-party components keep their own licenses: see THIRD_PARTY.md and licenses/.

@@ -1,0 +1,31 @@
+SPDX-License-Identifier: MIT
+Copyright 2026 Ali Haydar Ozturk. Derived from stable-diffusion.cpp / ggml (MIT).
+Subject: 0012-vram-margin-env
+Diagnostic: env SD_VRAM_MARGIN_MB=<MB> replaces the VRAM safety margin of the capacity check. Unset = unchanged.
+
+diff --git a/src/model_manager.cpp b/src/model_manager.cpp
+index bfdf262..789ad64 100644
+--- a/src/model_manager.cpp
++++ b/src/model_manager.cpp
+@@ -1,6 +1,7 @@
+ #include "model_manager.h"
+ 
+ #include <algorithm>
++#include <cstdlib>
+ #include <cstdint>
+ #include <iterator>
+ #include <mutex>
+@@ -1797,6 +1798,13 @@ ModelManager::CapacityCheck ModelManager::check_capacity(
+         safety_margin = 1024ULL * 1024ULL * 1024ULL;
+     }
+ #endif
++    // Diagnostic override (speed work, 0012): SD_VRAM_MARGIN_MB=<MB> replaces the safety margin. Unset = unchanged.
++    if (const char* margin_env = std::getenv("SD_VRAM_MARGIN_MB")) {
++        const long long margin_mb = std::atoll(margin_env);
++        if (margin_mb > 0) {
++            safety_margin = static_cast<size_t>(margin_mb) * 1024ULL * 1024ULL;
++        }
++    }
+     result.required_device_bytes = add(add(request.pending_allocation_bytes, missing), safety_margin);
+     result.required_budget_bytes = add(request.runtime_peak_bytes(), missing);
+     auto available_device_bytes  = [&](ggml_backend_t backend) {

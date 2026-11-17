@@ -1,0 +1,111 @@
+{
+  "schema": 1,
+  "note": "Three model files, two engine zips and one optional NVIDIA archive (cudnn). Revisions are pinned commits / release tags / one versioned archive, never 'main' or 'latest'. Every file is checked with sha256 after download.",
+  "models": [
+    {
+      "name": "z_image_turbo-Q8_0.gguf",
+      "role": "diffusion model (Z-Image-Turbo, Q8_0)",
+      "repo": "leejet/Z-Image-Turbo-GGUF",
+      "revision": "c61c0e422dc8b541b7548cf33a4ef8302b0f8085",
+      "url": "https://huggingface.co/leejet/Z-Image-Turbo-GGUF/resolve/c61c0e422dc8b541b7548cf33a4ef8302b0f8085/z_image_turbo-Q8_0.gguf",
+      "bytes": 6577440704,
+      "sha256": "df1c5baa86d1398c979495a6072dbcee79444fdb884a2445582ba0769c44e9a1",
+      "license": "Apache-2.0",
+      "base_model": "Tongyi-MAI/Z-Image-Turbo"
+    },
+    {
+      "name": "Qwen3-4B-Instruct-2507-Q8_0.gguf",
+      "role": "text encoder (LLM), Q8_0",
+      "repo": "unsloth/Qwen3-4B-Instruct-2507-GGUF",
+      "revision": "a06e946bb6b655725eafa393f4a9745d460374c9",
+      "url": "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/a06e946bb6b655725eafa393f4a9745d460374c9/Qwen3-4B-Instruct-2507-Q8_0.gguf",
+      "bytes": 4280405600,
+      "sha256": "391c1e410fd9f4cf2de2b510273b56a84c19ce18f4fa3bfb3774031dac4ef068",
+      "license": "Apache-2.0",
+      "base_model": "Qwen/Qwen3-4B-Instruct-2507"
+    },
+    {
+      "name": "ae.safetensors",
+      "role": "VAE (FLUX.1 autoencoder)",
+      "repo": "Comfy-Org/Z-Image-Turbo",
+      "revision": "6fc90a3b1b653e935a0d175e260736de25b84df5",
+      "url": "https://huggingface.co/Comfy-Org/Z-Image-Turbo/resolve/6fc90a3b1b653e935a0d175e260736de25b84df5/split_files/vae/ae.safetensors",
+      "bytes": 335304388,
+      "sha256": "afc8e28272cd15db3919bacdb6918ce9c1ed22e96cb12c4d5ed0fba823529e38",
+      "license": "Apache-2.0 (repo tag)",
+      "base_model": "black-forest-labs FLUX.1 autoencoder"
+    }
+  ],
+  "engine": [
+    {
+      "name": "z-image-turbo-engine-v0.1.0-win-x64-cuda12.8-sm86.zip",
+      "role": "sd-cli.exe and sd-server.exe (stable-diffusion.cpp master-1088-32d516c + ggml d803c23 + 8 patches, see patches/README.md), built for sm_86 (Ampere) only; sha256 measured on the published asset",
+      "url": "https://github.com/mstf-svndk/z-image-turbo-rtx2050-4gb/releases/download/v0.1.0/z-image-turbo-engine-v0.1.0-win-x64-cuda12.8-sm86.zip",
+      "bytes": 59473409,
+      "sha256": "f1fd60a1e85b763ec0c1b90b8624aaae5c0b43622b7a9ed89494fab38307bed6",
+      "license": "MIT (stable-diffusion.cpp, ggml, patches); bundled third-party notices in the zip"
+    },
+    {
+      "name": "cudart-cuda12.8-win-x64.zip",
+      "role": "NVIDIA CUDA 12.8 runtime DLLs (cudart, cublas, cublasLt), unmodified",
+      "url": "https://github.com/alexturkey/wan22-pascal-4gb/releases/download/v0.1.0/cudart-cuda12.8-win-x64.zip",
+      "bytes": 567007257,
+      "sha256": "a17da465766934bef0654f4e1a75ce7ad973ac18ab68f972dd111ccf74165377",
+      "license": "NVIDIA CUDA EULA, Attachment A (redistributable)"
+    }
+  ],
+  "cudnn": {
+    "name": "cudnn-windows-x86_64-9.10.2.21_cuda11-archive.zip",
+    "role": "optional: NVIDIA cuDNN runtime DLLs for the fast, more exact VAE decode. Not stored in this repository or its releases; downloaded from NVIDIA after the user accepts NVIDIA's license",
+    "version": "9.10.2.21 (cuda11 build; the only build we measured)",
+    "url": "https://developer.download.nvidia.com/compute/cudnn/redist/cudnn/windows-x86_64/cudnn-windows-x86_64-9.10.2.21_cuda11-archive.zip",
+    "bytes": 384728540,
+    "sha256": "dc837ef00beffab937979ba5a72c27facd0443c7e3fa71fc7c2e29adf5262f36",
+    "license": "NVIDIA Software Development Kits license + cuDNN Supplement (proprietary)",
+    "license_url": "https://docs.nvidia.com/deeplearning/cudnn/backend/latest/reference/eula.html",
+    "license_member": "cudnn-windows-x86_64-9.10.2.21_cuda11-archive/LICENSE",
+    "license_save_as": "NVIDIA_cuDNN_LICENSE.txt",
+    "members": [
+      {
+        "path": "cudnn-windows-x86_64-9.10.2.21_cuda11-archive/bin/cudnn64_9.dll",
+        "bytes": 266296,
+        "crc32": "a6add953"
+      },
+      {
+        "path": "cudnn-windows-x86_64-9.10.2.21_cuda11-archive/bin/cudnn_adv64_9.dll",
+        "bytes": 168971296,
+        "crc32": "7c17dedb"
+      },
+      {
+        "path": "cudnn-windows-x86_64-9.10.2.21_cuda11-archive/bin/cudnn_cnn64_9.dll",
+        "bytes": 3929632,
+        "crc32": "a17fe874"
+      },
+      {
+        "path": "cudnn-windows-x86_64-9.10.2.21_cuda11-archive/bin/cudnn_engines_precompiled64_9.dll",
+        "bytes": 272844320,
+        "crc32": "0c64d7d9"
+      },
+      {
+        "path": "cudnn-windows-x86_64-9.10.2.21_cuda11-archive/bin/cudnn_engines_runtime_compiled64_9.dll",
+        "bytes": 18143776,
+        "crc32": "08b68e9b"
+      },
+      {
+        "path": "cudnn-windows-x86_64-9.10.2.21_cuda11-archive/bin/cudnn_graph64_9.dll",
+        "bytes": 2393632,
+        "crc32": "19523c23"
+      },
+      {
+        "path": "cudnn-windows-x86_64-9.10.2.21_cuda11-archive/bin/cudnn_heuristic64_9.dll",
+        "bytes": 56803376,
+        "crc32": "8aaadb8d"
+      },
+      {
+        "path": "cudnn-windows-x86_64-9.10.2.21_cuda11-archive/bin/cudnn_ops64_9.dll",
+        "bytes": 69195320,
+        "crc32": "b58eb6fb"
+      }
+    ]
+  }
+}

@@ -1,0 +1,79 @@
+SPDX-License-Identifier: MIT
+Copyright 2026 Ali Haydar Ozturk. Derived from stable-diffusion.cpp / ggml (MIT).
+Subject: 0028b-vae-try-untiled-first
+VAE decode: with env SD_VAE_TRY_FULL=1 and a tiled request, try one untiled decode first (margin SD_VAE_FULL_MARGIN_MB, default 256); on allocation failure fall back to the requested tile. Logs a "VAE path:" line. Default off.
+
+diff --git a/src/pipeline/diffusion_engine.cpp b/src/pipeline/diffusion_engine.cpp
+index ac9dfcb..2a43cf8 100644
+--- a/src/pipeline/diffusion_engine.cpp
++++ b/src/pipeline/diffusion_engine.cpp
+@@ -3070,7 +3070,30 @@ sd::Tensor<float> StableDiffusionGGML::decode_first_stage(const sd::Tensor<float
+     const char* tile_floor_env  = std::getenv("SD_VAE_TILE_FLOOR");
+     const bool tile_floor_on    = tile_floor_env != nullptr && std::atoi(tile_floor_env) > 0;
+     bool tile_floor_applied     = false;
++    // Patch 0028b (default off): SD_VAE_TRY_FULL=1 and the request ASKED for tiling (cli --vae-tiling / server tag): try ONE untiled decode first
++    // with VRAM margin SD_VAE_FULL_MARGIN_MB (default 256); if it runs out of memory (ALLOC_FAILED), restore the requested tiling and the
++    // margin of patch 0027 (SD_VAE_VRAM_MARGIN_MB or default) and continue exactly as before (0025 floor, generic halving).
++    // Unset = byte-for-byte the old path. SD_VAE_TRY_FULL=1 or SD_CAPACITY_LOG=1 also logs one "VAE path: ..." line.
++    const char* try_full_env      = std::getenv("SD_VAE_TRY_FULL");
++    const bool try_full_on        = try_full_env != nullptr && std::atoi(try_full_env) > 0;
++    const char* path_log_env      = std::getenv("SD_CAPACITY_LOG");
++    const bool path_log_on        = try_full_on || (path_log_env != nullptr && path_log_env[0] != '\0' && path_log_env[0] != '0');
++    const auto requested_tiling   = tiling_params;
++    bool try_full_active          = false;
++    bool generic_retry            = false;
++    int vae_attempts              = 0;
++    if (try_full_on && tiling_params.enabled && !prefer_temporal_tiling) {
++        const char* full_margin_env = std::getenv("SD_VAE_FULL_MARGIN_MB");
++        long long full_margin_mb    = full_margin_env != nullptr ? std::atoll(full_margin_env) : 0;
++        if (full_margin_mb <= 0) {
++            full_margin_mb = 256;
++        }
++        try_full_active       = true;
++        tiling_params.enabled = false;
++        g_vae_vram_margin_override_mb.store(full_margin_mb);
++    }
+     for (;;) {
++        vae_attempts++;
+         int tile_size_w = static_cast<int>(latents.shape()[0]);
+         int tile_size_h = static_cast<int>(latents.shape()[1]);
+         float tile_overlap;
+@@ -3080,6 +3103,15 @@ sd::Tensor<float> StableDiffusionGGML::decode_first_stage(const sd::Tensor<float
+             return {};
+         }
+         auto decoded = first_stage_model->decode(n_threads, latents, tiling_params, decode_video, circular_x, circular_y);
++        if (decoded.empty() && try_full_active && first_stage_model->last_compute_status() == GGML_STATUS_ALLOC_FAILED) {
++            try_full_active = false;
++            tiling_params   = requested_tiling;
++            const char* vae_margin_env = std::getenv("SD_VAE_VRAM_MARGIN_MB");
++            const long long vae_margin = vae_margin_env != nullptr ? std::atoll(vae_margin_env) : 0;
++            g_vae_vram_margin_override_mb.store(vae_margin > 0 ? vae_margin : 0);
++            LOG_WARN("VAE untiled decode did not fit; falling back to the requested tile");
++            continue;
++        }
+         if (decoded.empty() && tile_floor_on && !tile_floor_applied && tiling_params.enabled && !prefer_temporal_tiling &&
+             first_stage_model->last_compute_status() == GGML_STATUS_ALLOC_FAILED &&
+             (tile_size_w < latents.shape()[0] || tile_size_h < latents.shape()[1])) {
+@@ -3100,12 +3132,20 @@ sd::Tensor<float> StableDiffusionGGML::decode_first_stage(const sd::Tensor<float
+         if (sd_version_is_minimax_h3_image(version) && !decoded.empty() && decoded.dim() == 5) {
+             decoded = decoded.squeeze(2);
+         }
+-        if (!decoded.empty() ||
+-            !sd::backend_fit::prepare_vae_decode_retry_tiling(tiling_params, prefer_temporal_tiling,
++        if (!decoded.empty()) {
++            if (path_log_on) {
++                const char* kind = !tiling_params.enabled ? "full" : (tile_floor_applied ? "floor" : (generic_retry ? "retry" : "tile"));
++                LOG_WARN("VAE path: %s %dx%d (attempt %d)", kind, tile_size_w * first_stage_model->get_scale_factor(),
++                         tile_size_h * first_stage_model->get_scale_factor(), vae_attempts);
++            }
++            return decoded;
++        }
++        if (!sd::backend_fit::prepare_vae_decode_retry_tiling(tiling_params, prefer_temporal_tiling,
+                                                               first_stage_model->last_compute_status(),
+                                                               tile_size_w, tile_size_h, first_stage_model->get_scale_factor())) {
+             return decoded;
+         }
++        generic_retry = true;
+     }
+ }
+ 

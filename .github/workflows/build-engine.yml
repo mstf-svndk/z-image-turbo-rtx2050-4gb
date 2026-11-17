@@ -1,0 +1,201 @@
+name: build-engine
+
+# Builds sd-cli.exe for NVIDIA Ampere sm_86 (4 GB, CUDA 12.8, Windows x64) and publishes it as a release asset.
+# Manual run: Actions -> build-engine -> Run workflow. Fill "release_tag" to get a draft release with the zip.
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Create a draft GitHub release with this tag (e.g. v0.1.0). Empty = artifact only."
+        required: false
+        default: ""
+        type: string
+      engine_version:
+        description: "Version string used in the zip file name (e.g. 0.1.0)"
+        required: false
+        default: "0.1.0"
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  engine:
+    runs-on: windows-2022
+    timeout-minutes: 300
+    env:
+      SDCPP_REPO: https://github.com/leejet/stable-diffusion.cpp.git
+      SDCPP_COMMIT: 32d516c
+      GGML_COMMIT: d803c23
+      CUDNN_URL: https://developer.download.nvidia.com/compute/cudnn/redist/cudnn/windows-x86_64/cudnn-windows-x86_64-9.10.2.21_cuda11-archive.zip
+      CUDA_ARCH: "86"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show runner GPU-less facts
+        shell: pwsh
+        run: |
+          Write-Host "CPU: $env:NUMBER_OF_PROCESSORS, disk:"
+          Get-PSDrive C | Select-Object Used,Free
+
+      - name: Install CUDA 12.8 toolkit (no driver)
+        uses: Jimver/cuda-toolkit@v0.2.36
+        with:
+          cuda: "12.8.0"
+          method: "local"
+          use-github-cache: "true"
+
+      - name: Check nvcc
+        shell: pwsh
+        run: |
+          nvcc --version
+          if (-not (Test-Path "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8\bin\cuobjdump.exe")) {
+            throw "cuobjdump not found"
+          }
+
+      - name: cuDNN headers and import library
+        shell: pwsh
+        run: |
+          curl.exe -L --retry 5 --retry-delay 3 -o cudnn.zip "$env:CUDNN_URL"
+          if ((Get-Item cudnn.zip).Length -lt 100MB) { throw "cuDNN archive looks truncated" }
+          Expand-Archive -Path cudnn.zip -DestinationPath cudnn -Force
+          $root = (Get-ChildItem cudnn -Directory | Select-Object -First 1).FullName
+          if (-not (Test-Path (Join-Path $root "include\cudnn.h"))) { throw "cudnn.h missing in $root" }
+          if (-not (Test-Path (Join-Path $root "lib\x64\cudnn.lib"))) { throw "cudnn.lib missing in $root" }
+          "CUDNN_ROOT=$root" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "CUDNN_ROOT=$root"
+
+      - name: Clone stable-diffusion.cpp (LF, pinned commits)
+        shell: pwsh
+        run: |
+          git -c core.autocrlf=false clone --quiet $env:SDCPP_REPO sdcpp
+          git -C sdcpp checkout --quiet $env:SDCPP_COMMIT
+          git -C sdcpp submodule update --init --recursive --quiet
+          git -C sdcpp/ggml checkout --quiet $env:GGML_COMMIT
+          Write-Host "sdcpp $(git -C sdcpp rev-parse --short HEAD), ggml $(git -C sdcpp/ggml rev-parse --short HEAD)"
+
+      - name: Apply the 8 patches
+        shell: pwsh
+        run: |
+          $P = (Resolve-Path "patches").Path
+          Push-Location sdcpp/ggml
+          git apply "$P\ggml\0006-cuda-im2col-fast.patch"
+          git apply "$P\ggml\0009-cuda-cudnn-conv2d-f32.patch"
+          Pop-Location
+          Push-Location sdcpp
+          git apply "$P\sdcpp\0012-vram-margin-env.patch"
+          git apply "$P\sdcpp\0022b-zimage-refiner-single-pass.patch"
+          git apply "$P\sdcpp\0025-vae-tile-floor.patch"
+          git apply "$P\sdcpp\0027-vae-vram-margin.patch"
+          git apply "$P\sdcpp\0028b-vae-try-untiled-first.patch"
+          git apply "$P\sdcpp\0029-capacity-log.patch"
+          Pop-Location
+          Write-Host "patches applied"
+
+      - name: Configure (sm_86, shared libs, cuDNN conv2d)
+        shell: pwsh
+        run: |
+          $args1 = @(
+            "-S", "sdcpp", "-B", "build", "-G", "Visual Studio 17 2022", "-A", "x64",
+            "-DSD_CUDA=ON",
+            "-DCMAKE_CUDA_ARCHITECTURES=86",
+            "-DGGML_NATIVE=OFF",
+            "-DGGML_BACKEND_DL=ON",
+            "-DSD_BUILD_SHARED_LIBS=ON",
+            "-DSD_BUILD_SHARED_GGML_LIB=ON",
+            "-DSD_SERVER_BUILD_FRONTEND=OFF",
+            "-DGGML_CUDA_CUDNN_CONV2D_F32=ON",
+            "-DCUDNN_ROOT=$env:CUDNN_ROOT"
+          )
+          Write-Host "cmake $($args1 -join ' ')"
+          cmake @args1
+          if ($LASTEXITCODE -ne 0) { throw "cmake configure failed" }
+
+      - name: Build (Release, 2 parallel jobs)
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw "build failed" }
+
+      - name: Locate the binaries
+        id: find
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem build -Recurse -Filter sd-cli.exe | Select-Object -First 1
+          if (-not $exe) { throw "sd-cli.exe was not produced" }
+          $binDir = $exe.Directory.FullName
+          $dlls = (Get-ChildItem $binDir -Recurse -Include *.dll,*.exe).Count
+          Write-Host "bin dir: $binDir ($dlls exe/dll files)"
+          "BIN_DIR=$binDir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Upload the raw binaries (safety net)
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-sm86-raw
+          path: build/bin/Release
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Verify the sm_86 kernel image
+        shell: pwsh
+        run: |
+          $cuobjdump = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8\bin\cuobjdump.exe"
+          $targets = Get-ChildItem $env:BIN_DIR -Recurse -Include *.dll,*.exe
+          $hits = @()
+          foreach ($t in $targets) {
+            $out = & $cuobjdump -lelf $t.FullName 2>$null
+            if ($out -match "sm_86") { $hits += $t.Name }
+          }
+          if ($hits.Count -eq 0) { throw "no sm_86 ELF image found in the engine binaries" }
+          Write-Host "sm_86 present in: $($hits -join ', ')"
+          "SM86_IN=$($hits -join ', ')" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          $global:LASTEXITCODE = 0
+          exit 0
+
+      - name: Package the engine zip
+        shell: pwsh
+        run: |
+          $name = "z-image-turbo-engine-v${{ inputs.engine_version }}-win-x64-cuda12.8-sm86.zip"
+          New-Item -ItemType Directory -Force stage | Out-Null
+          Copy-Item "$env:BIN_DIR\*" stage -Recurse -Force
+          Copy-Item LICENSE, NOTICE, THIRD_PARTY.md, README.md stage -Force
+          Copy-Item licenses stage -Recurse -Force
+          New-Item -ItemType Directory -Force stage\patches | Out-Null
+          Copy-Item patches\LICENSE-MIT stage\patches -Force
+          Compress-Archive -Path "stage\*" -DestinationPath $name -CompressionLevel Optimal
+          $h = (Get-FileHash $name -Algorithm SHA256).Hash.ToLower()
+          $b = (Get-Item $name).Length
+          Write-Host "ENGINE_ZIP $name"
+          Write-Host "ENGINE_BYTES $b"
+          Write-Host "ENGINE_SHA256 $h"
+          "ENGINE_NAME=$name" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "ENGINE_SHA256=$h" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "ENGINE_BYTES=$b" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          @"
+          ### Engine build
+          - zip: ``$name``
+          - bytes: ``$b``
+          - sha256: ``$h``
+          - CUDA arch: sm_86 (``CMAKE_CUDA_ARCHITECTURES=86``)
+          - sm_86 image found in: ``$env:SM86_IN``
+          "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-sm86
+          path: z-image-turbo-engine-*.zip
+          if-no-files-found: error
+
+      - name: Draft release
+        if: ${{ inputs.release_tag != '' }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ inputs.release_tag }}" "$env:ENGINE_NAME" `
+            --draft `
+            --title "Engine ${{ inputs.release_tag }} (sm_86, CUDA 12.8)" `
+            --notes "Prebuilt sd-cli.exe for NVIDIA Ampere compute capability 8.6 (reference card: RTX 2050 4 GB), CUDA 12.8, Windows x64. stable-diffusion.cpp 32d516c + ggml d803c23 + 8 patches (see patches/README.md). sha256: $env:ENGINE_SHA256. Not measured on the RTX 2050 yet."
+          if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }

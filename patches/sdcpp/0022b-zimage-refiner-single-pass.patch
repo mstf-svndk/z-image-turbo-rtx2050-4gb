@@ -1,0 +1,37 @@
+SPDX-License-Identifier: MIT
+Copyright 2026 Ali Haydar Ozturk. Derived from stable-diffusion.cpp / ggml (MIT).
+Subject: 0022b-zimage-refiner-single-pass
+Z-Image: no graph-cut mark after the concat, so the refiner blocks run once per step instead of twice (byte-identical output). Env SD_ZIMAGE_CONCAT_CUT=1 restores the old behavior.
+
+diff --git a/src/model/diffusion/z_image.hpp b/src/model/diffusion/z_image.hpp
+index 43df4d3..36f9237 100644
+--- a/src/model/diffusion/z_image.hpp
++++ b/src/model/diffusion/z_image.hpp
+@@ -3,6 +3,7 @@
+ 
+ #include <algorithm>
+ #include <cinttypes>
++#include <cstdlib>
+ #include "core/pe_cache.h"
+ 
+ #include "core/ggml_extend.h"
+@@ -830,7 +831,18 @@ namespace ZImage {
+             }
+ 
+             auto txt_img = ggml_concat(ctx->ggml_ctx, txt, img, 1);  // [N, n_txt_token + n_txt_pad_token + n_img_token + n_img_pad_token, hidden_size]
+-            sd::ggml_graph_cut::mark_graph_cut(txt_img, "z_image.prelude", "txt_img");
++            // Default (since 0022b): NO cut mark here. With the mark, group "z_image.prelude" (shared with the cuts above) collects the
++            // concat output as one more output of the FIRST segment, so that segment pulls in all four refiner blocks (the plan builder walks
++            // every upstream node that is not yet a finished cut) and then each refiner block runs a second time in its own segment whose
++            // output nobody reads. Without the mark the concat is computed inside the first layer's segment from the refiner cuts.
++            // SD_ZIMAGE_CONCAT_CUT=1 restores the old behavior (rollback).
++            static const bool concat_cut = [] {
++                const char* e = std::getenv("SD_ZIMAGE_CONCAT_CUT");
++                return e != nullptr && std::atoi(e) > 0;
++            }();
++            if (concat_cut) {
++                sd::ggml_graph_cut::mark_graph_cut(txt_img, "z_image.prelude", "txt_img");
++            }
+ 
+             std::vector<ggml_tensor*> main_hints;
+             if (control_ctx != nullptr) {

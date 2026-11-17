@@ -1,0 +1,98 @@
+SPDX-License-Identifier: MIT
+Copyright 2026 Ali Haydar Ozturk. Derived from stable-diffusion.cpp / ggml (MIT).
+Subject: 0006-cuda-im2col-fast
+CUDA im2col fast path (same values as the old kernel). Env GGML_CUDA_IM2COL_FAST=0 selects the old kernel.
+
+diff --git a/src/ggml-cuda/im2col.cu b/src/ggml-cuda/im2col.cu
+index d377f285..8f7efb81 100644
+--- a/src/ggml-cuda/im2col.cu
++++ b/src/ggml-cuda/im2col.cu
+@@ -1,5 +1,8 @@
+ #include "im2col.cuh"
+ 
++#include <climits>
++#include <cstdlib>
++
+ #define MAX_GRIDDIM_Y 65535
+ #define MAX_GRIDDIM_Z 65535
+ 
+@@ -44,6 +47,57 @@ static  __global__ void im2col_kernel(
+     }
+ }
+ 
++// ---- im2col fast path (2D/1D). Same values as im2col_kernel (pure data movement + the same float->T conversion);
++// the int64 div/mod of (iic, ikh, ikw) is done once per thread in int32 and amortised over X_TILE output columns.
++// Env GGML_CUDA_IM2COL_FAST=0 selects the old kernel (unset or any other value = fast path). ----
++#define IM2COL_FAST_X_TILE 8
++
++static bool ggml_cuda_im2col_fast_enabled() {
++    static const bool on = [] { const char * e = getenv("GGML_CUDA_IM2COL_FAST"); return !(e && e[0] == '0'); }();
++    return on;
++}
++
++template <typename T, int X_TILE>
++static __global__ void im2col_xtile_kernel(
++        const float * __restrict__ x, T * __restrict__ dst,
++        int IC_KH_KW, int KH_KW, int KW, int IH, int IW, int OH, int OW,
++        int64_t IC_IH_IW, int64_t IH_IW,
++        int s0, int s1, int p0, int p1, int d0, int d1) {
++    const int c = blockIdx.x * blockDim.x + threadIdx.x; // = iic*KH*KW + ikh*KW + ikw (contiguous in dst)
++    if (c >= IC_KH_KW) {
++        return;
++    }
++    const int iic = c / KH_KW;
++    const int rem = c - iic * KH_KW;
++    const int ikh = rem / KW;
++    const int ikw = rem - ikh * KW;
++
++    const int iz  = blockIdx.z; // = in*OH + ioh
++    const int in  = iz / OH;
++    const int ioh = iz - in * OH;
++    const int base_iow = blockIdx.y * X_TILE;
++
++    const int iih = ioh * s1 + ikh * d1 - p1;
++    const bool h_ok = iih >= 0 && iih < IH;
++    const int64_t src_row = (int64_t) iic * IC_IH_IW + (int64_t) in * IH_IW + (int64_t) iih * IW; // only dereferenced if h_ok
++    const int64_t dst_row = ((int64_t) iz * OW + base_iow) * IC_KH_KW + c;
++
++#pragma unroll
++    for (int dx = 0; dx < X_TILE; ++dx) {
++        const int iow = base_iow + dx;
++        if (iow >= OW) {
++            return;
++        }
++        const int iiw = iow * s0 + ikw * d0 - p0;
++        const int64_t offset_dst = dst_row + (int64_t) dx * IC_KH_KW;
++        if (!h_ok || iiw < 0 || iiw >= IW) {
++            dst[offset_dst] = 0.0f;
++        } else {
++            dst[offset_dst] = x[src_row + iiw];
++        }
++    }
++}
++
+ // im2col: [N, IC, IH, IW] => [N, OH, OW, IC*KH*KW]
+ template <typename T>
+ static void im2col_cuda(const float * x, T* dst,
+@@ -54,6 +108,21 @@ static void im2col_cuda(const float * x, T* dst,
+     const int64_t N_OH = N * OH;
+     const int64_t KH_KW = KW*KH;
+     const int threads_per_block = MIN((int)IC_KH_KW, CUDA_IM2COL_BLOCK_SIZE);
++    if (ggml_cuda_im2col_fast_enabled() &&
++        IC_KH_KW <= INT_MAX && N_OH <= MAX_GRIDDIM_Z &&
++        (OW + IM2COL_FAST_X_TILE - 1) / IM2COL_FAST_X_TILE <= MAX_GRIDDIM_Y &&
++        (OW - 1) * (int64_t) s0 + (KW - 1) * (int64_t) d0 <= INT_MAX &&
++        (OH - 1) * (int64_t) s1 + (KH - 1) * (int64_t) d1 <= INT_MAX &&
++        IW <= INT_MAX && IH <= INT_MAX && OW <= INT_MAX && OH <= INT_MAX) {
++        const dim3 fast_blocks((unsigned) ((IC_KH_KW + 255) / 256),
++                               (unsigned) ((OW + IM2COL_FAST_X_TILE - 1) / IM2COL_FAST_X_TILE),
++                               (unsigned) N_OH);
++        im2col_xtile_kernel<T, IM2COL_FAST_X_TILE><<<fast_blocks, 256, 0, stream>>>(
++            x, dst, (int) IC_KH_KW, (int) KH_KW, (int) KW, (int) IH, (int) IW, (int) OH, (int) OW,
++            IC_IH_IW, IH_IW, s0, s1, p0, p1, d0, d1);
++        return;
++    }
++
+     dim3 block_nums(MIN(OW, MAX_GRIDDIM_Y), MIN(N_OH, MAX_GRIDDIM_Z));
+ 
+     im2col_kernel<<<block_nums, threads_per_block, 0, stream>>>(

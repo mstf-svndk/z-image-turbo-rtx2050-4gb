@@ -1,0 +1,66 @@
+SPDX-License-Identifier: MIT
+Copyright 2026 Ali Haydar Ozturk. Derived from stable-diffusion.cpp / ggml (MIT).
+Subject: 0027-vae-vram-margin
+VAE decode: env SD_VAE_VRAM_MARGIN_MB=<MB> sets the VRAM safety margin only while the VAE decodes (sampling keeps its margin). Default off.
+
+diff --git a/src/model_manager.cpp b/src/model_manager.cpp
+index 789ad64..e4be8d3 100644
+--- a/src/model_manager.cpp
++++ b/src/model_manager.cpp
+@@ -1,6 +1,7 @@
+ #include "model_manager.h"
+ 
+ #include <algorithm>
++#include <atomic>
+ #include <cstdlib>
+ #include <cstdint>
+ #include <iterator>
+@@ -102,6 +103,10 @@ static bool device_supports_param_op(ggml_backend_dev_t device,
+     return supported;
+ }
+ 
++// Patch 0027: set (>0, MB) by decode_first_stage while the VAE decodes if SD_VAE_VRAM_MARGIN_MB is set; replaces the safety margin
++// (also SD_VRAM_MARGIN_MB) for that phase only. 0 = no override (default).
++std::atomic<long long> g_vae_vram_margin_override_mb{0};
++
+ ModelManager::~ModelManager() {
+     release_all();
+     release_prefetch();
+@@ -1805,6 +1810,9 @@ ModelManager::CapacityCheck ModelManager::check_capacity(
+             safety_margin = static_cast<size_t>(margin_mb) * 1024ULL * 1024ULL;
+         }
+     }
++    if (const long long vae_margin_mb = g_vae_vram_margin_override_mb.load(); vae_margin_mb > 0) {
++        safety_margin = static_cast<size_t>(vae_margin_mb) * 1024ULL * 1024ULL;
++    }
+     result.required_device_bytes = add(add(request.pending_allocation_bytes, missing), safety_margin);
+     result.required_budget_bytes = add(request.runtime_peak_bytes(), missing);
+     auto available_device_bytes  = [&](ggml_backend_t backend) {
+diff --git a/src/pipeline/diffusion_engine.cpp b/src/pipeline/diffusion_engine.cpp
+index 3d92b2c..ac9dfcb 100644
+--- a/src/pipeline/diffusion_engine.cpp
++++ b/src/pipeline/diffusion_engine.cpp
+@@ -3038,8 +3038,23 @@ sd::Tensor<float> StableDiffusionGGML::encode_first_stage(const sd::Tensor<float
+     return latents;
+ }
+ 
++extern std::atomic<long long> g_vae_vram_margin_override_mb;  // model_manager.cpp, patch 0027
++
+ sd::Tensor<float> StableDiffusionGGML::decode_first_stage(const sd::Tensor<float>& x, bool decode_video) {
+     generation_progress.report("vae_decode");
++    // SD_VAE_VRAM_MARGIN_MB=<MB> (default unset = unchanged): VRAM safety margin ONLY while the VAE decodes; sampling keeps its margin.
++    struct VaeMarginScope {
++        VaeMarginScope() {
++            const char* e = std::getenv("SD_VAE_VRAM_MARGIN_MB");
++            const long long v = e != nullptr ? std::atoll(e) : 0;
++            if (v > 0) {
++                g_vae_vram_margin_override_mb.store(v);
++            }
++        }
++        ~VaeMarginScope() {
++            g_vae_vram_margin_override_mb.store(0);
++        }
++    } vae_margin_scope;
+     if (sd_version_is_pid(version) || sd_version_is_minit2i(version) || version == VERSION_IRIS) {
+         return sd::ops::clamp((x + 1.f) * 0.5f, 0.0f, 1.0f);
+     }

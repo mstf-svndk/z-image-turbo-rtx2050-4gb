@@ -1,0 +1,10 @@
+# downloaded at setup time, never committed
+models/
+bin/
+outputs/
+*.part
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+testbin/

@@ -1,0 +1,202 @@
+SPDX-License-Identifier: MIT
+Copyright 2026 Ali Haydar Ozturk. Derived from stable-diffusion.cpp / ggml (MIT).
+Subject: 0009-cuda-cudnn-conv2d-f32
+Optional cuDNN F32 conv2d branch (CMake option GGML_CUDA_CUDNN_CONV2D_F32, runtime env GGML_CUDA_CUDNN_CONV2D=1); algorithm pinning (GGML_CUDA_CUDNN_ALGO), workspace cap (GGML_CUDA_CUDNN_WS_MB), timing log (GGML_CUDA_CUDNN_LOG). Includes the CMake change that gives cuDNN flags to conv2d.cu only.
+
+diff --git a/src/ggml-cuda/CMakeLists.txt b/src/ggml-cuda/CMakeLists.txt
+index 37aa6d94..24ee848b 100644
+--- a/src/ggml-cuda/CMakeLists.txt
++++ b/src/ggml-cuda/CMakeLists.txt
+@@ -167,6 +167,18 @@ if (CUDAToolkit_FOUND)
+         target_link_libraries(ggml-cuda PRIVATE CCCL::CCCL)
+     endif()
+ 
++    if (GGML_CUDA_CUDNN_CONV2D_F32)
++        # opt-in cuDNN F32 conv2d branch (runtime switch GGML_CUDA_CUDNN_CONV2D=1); set CUDNN_ROOT or CUDNN_INCLUDE_DIR/CUDNN_LIBRARY
++        find_path(CUDNN_INCLUDE_DIR cudnn.h HINTS ${CUDNN_ROOT} PATH_SUFFIXES include)
++        find_library(CUDNN_LIBRARY NAMES cudnn HINTS ${CUDNN_ROOT} PATH_SUFFIXES lib lib64 lib/x64)
++        if (NOT CUDNN_INCLUDE_DIR OR NOT CUDNN_LIBRARY)
++            message(FATAL_ERROR "GGML_CUDA_CUDNN_CONV2D_F32 needs cuDNN; set CUDNN_ROOT")
++        endif()
++        # per-file flags: only conv2d.cu sees cuDNN, so the other ggml-cuda objects are not rebuilt when the option is toggled
++        set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/conv2d.cu PROPERTIES COMPILE_FLAGS "-I\"${CUDNN_INCLUDE_DIR}\" -DGGML_CUDA_CUDNN_CONV2D_F32=1")
++        target_link_libraries(ggml-cuda PRIVATE ${CUDNN_LIBRARY})
++    endif()
++
+     if (GGML_STATIC)
+         if (WIN32)
+             # As of 12.3.1 CUDA Toolkit for Windows does not offer a static cublas library
+diff --git a/src/ggml-cuda/conv2d.cu b/src/ggml-cuda/conv2d.cu
+index 9636db23..593aa996 100644
+--- a/src/ggml-cuda/conv2d.cu
++++ b/src/ggml-cuda/conv2d.cu
+@@ -2,6 +2,153 @@
+ #include "convert.cuh"
+ #include "mma.cuh"
+ 
++#ifdef GGML_CUDA_CUDNN_CONV2D_F32
++// ---- cuDNN F32 conv2d branch (opt-in: env GGML_CUDA_CUDNN_CONV2D=1; unset/0 = the old direct kernel, zero effect). ----
++// All tensors stay F32 (an F16 kernel is widened exactly), default (non tensor-op) math, so no precision is dropped versus
++// im2col+sgemm; the sum order differs, so results are NOT byte-identical to the old path (judge by the quality gate).
++// Workspace cap: env GGML_CUDA_CUDNN_WS_MB (default 256). The first v7 candidate that fits the cap is used.
++#include <cudnn.h>
++#include <cstdlib>
++#include <cstring>
++#include <map>
++#include <tuple>
++#include <array>
++
++// Patch 0010: pins the cuDNN algorithm family and caches the choice per shape (see header of the patch).
++// GGML_CUDA_CUDNN_ALGO: "gemm" (default) = only IMPLICIT_GEMM / IMPLICIT_PRECOMP_GEMM / GEMM (plain multiply-add in one fixed summation scheme,
++// no Winograd / FFT transforms); "any" = every algorithm the heuristic returns (the 0009 behaviour).
++static bool ggml_cuda_cudnn_algo_allowed(cudnnConvolutionFwdAlgo_t algo) {
++    static const bool any = [] { const char * e = getenv("GGML_CUDA_CUDNN_ALGO"); return e && strcmp(e, "any") == 0; }();
++    if (any) {
++        return true;
++    }
++    return algo == CUDNN_CONVOLUTION_FWD_ALGO_IMPLICIT_GEMM || algo == CUDNN_CONVOLUTION_FWD_ALGO_IMPLICIT_PRECOMP_GEMM ||
++           algo == CUDNN_CONVOLUTION_FWD_ALGO_GEMM;
++}
++
++static bool ggml_cuda_cudnn_conv2d_enabled() {
++    static const bool on = [] { const char * e = getenv("GGML_CUDA_CUDNN_CONV2D"); return e && e[0] == '1'; }();
++    return on;
++}
++
++// returns false (nothing written) when no allowed algorithm fits the workspace cap: the caller then runs the old kernel
++static bool conv2d_cudnn_f32(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
++    const ggml_tensor * kernel = dst->src[0];
++    const ggml_tensor * input  = dst->src[1];
++    const auto checked = [](cudnnStatus_t status) {
++        if (status != CUDNN_STATUS_SUCCESS) {
++            GGML_ABORT("cuDNN conv2d F32 failed: %s", cudnnGetErrorString(status));
++        }
++    };
++    static const size_t ws_cap = [] {
++        const char * e = getenv("GGML_CUDA_CUDNN_WS_MB");
++        const long v = e ? atol(e) : 0;
++        return (size_t) (v > 0 ? v : 256) * 1024 * 1024;
++    }();
++    thread_local cudnnHandle_t handle = nullptr;
++    if (!handle) {
++        checked(cudnnCreate(&handle));
++    }
++    checked(cudnnSetStream(handle, ctx.stream()));
++
++    // F16 kernel -> exact F32 widening (VAE weights are normally F32 already: no copy then).
++    ggml_cuda_pool_alloc<float> w_f32(ctx.pool());
++    const float * w_ptr = (const float *) kernel->data;
++    if (kernel->type == GGML_TYPE_F16) {
++        w_f32.alloc(ggml_nelements(kernel));
++        ggml_get_to_fp32_cuda(GGML_TYPE_F16)(kernel->data, w_f32.get(), ggml_nelements(kernel), ctx.stream());
++        w_ptr = w_f32.get();
++    }
++
++    cudnnTensorDescriptor_t x_desc, y_desc;
++    cudnnFilterDescriptor_t w_desc;
++    cudnnConvolutionDescriptor_t conv_desc;
++    checked(cudnnCreateTensorDescriptor(&x_desc));
++    checked(cudnnCreateTensorDescriptor(&y_desc));
++    checked(cudnnCreateFilterDescriptor(&w_desc));
++    checked(cudnnCreateConvolutionDescriptor(&conv_desc));
++    // ggml ne = [W, H, C, N]; contiguous, W fastest => cuDNN NCHW / KCRS with the same memory order.
++    checked(cudnnSetTensor4dDescriptor(x_desc, CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT,
++        (int) input->ne[3], (int) input->ne[2], (int) input->ne[1], (int) input->ne[0]));
++    checked(cudnnSetTensor4dDescriptor(y_desc, CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT,
++        (int) dst->ne[3], (int) dst->ne[2], (int) dst->ne[1], (int) dst->ne[0]));
++    checked(cudnnSetFilter4dDescriptor(w_desc, CUDNN_DATA_FLOAT, CUDNN_TENSOR_NCHW,
++        (int) kernel->ne[3], (int) kernel->ne[2], (int) kernel->ne[1], (int) kernel->ne[0]));
++    const int32_t * p = (const int32_t *) dst->op_params; // stride_x, stride_y, pad_x, pad_y, dil_x, dil_y
++    checked(cudnnSetConvolution2dDescriptor(conv_desc, p[3], p[2], p[1], p[0], p[5], p[4],
++        CUDNN_CROSS_CORRELATION, CUDNN_DATA_FLOAT));
++#if defined(CUDNN_VERSION) && CUDNN_VERSION >= 8200
++    checked(cudnnSetConvolutionMathType(conv_desc, CUDNN_FMA_MATH));  // plain FP32 FMA, never a tensor-op / TF32 path
++#else
++    checked(cudnnSetConvolutionMathType(conv_desc, CUDNN_DEFAULT_MATH));
++#endif
++
++    // same shape -> same algorithm for the whole run (tiles of equal size never differ in summation scheme)
++    using key_t = std::array<int, 17>;
++    thread_local std::map<key_t, std::pair<cudnnConvolutionFwdAlgo_t, size_t>> algo_cache;
++    const key_t key = {(int) input->ne[0], (int) input->ne[1], (int) input->ne[2], (int) input->ne[3],
++                       (int) kernel->ne[0], (int) kernel->ne[1], (int) kernel->ne[3], p[0], p[1], p[2], p[3], p[4], p[5],
++                       (int) kernel->type, 0, 0, 0};
++    cudnnConvolutionFwdAlgo_t chosen = CUDNN_CONVOLUTION_FWD_ALGO_IMPLICIT_GEMM;
++    size_t ws_bytes = 0;
++    bool found = false;
++    auto cached = algo_cache.find(key);
++    if (cached != algo_cache.end()) {
++        chosen   = cached->second.first;
++        ws_bytes = cached->second.second;
++        found    = true;
++    } else {
++        cudnnConvolutionFwdAlgoPerf_t cand[8];
++        int n_cand = 0;
++        checked(cudnnGetConvolutionForwardAlgorithm_v7(handle, x_desc, w_desc, conv_desc, y_desc, 8, &n_cand, cand));
++        for (int i = 0; i < n_cand && !found; ++i) {
++            if (cand[i].status != CUDNN_STATUS_SUCCESS || !ggml_cuda_cudnn_algo_allowed(cand[i].algo)) {
++                continue;
++            }
++            size_t need = 0;
++            if (cudnnGetConvolutionForwardWorkspaceSize(handle, x_desc, w_desc, conv_desc, y_desc, cand[i].algo, &need) != CUDNN_STATUS_SUCCESS) {
++                continue;
++            }
++            if (need <= ws_cap) {
++                chosen   = cand[i].algo;
++                ws_bytes = need;
++                found    = true;
++            }
++        }
++        if (found) {
++            algo_cache[key] = {chosen, ws_bytes};
++        }
++    }
++    if (!found) {
++        checked(cudnnDestroyConvolutionDescriptor(conv_desc));
++        checked(cudnnDestroyFilterDescriptor(w_desc));
++        checked(cudnnDestroyTensorDescriptor(y_desc));
++        checked(cudnnDestroyTensorDescriptor(x_desc));
++        return false;
++    }
++    ggml_cuda_pool_alloc<uint8_t> ws(ctx.pool());
++    if (ws_bytes) {
++        ws.alloc(ws_bytes);
++    }
++    static const bool verbose = getenv("GGML_CUDA_CUDNN_LOG") != nullptr;
++    if (verbose) {
++        fprintf(stderr, "cudnn conv2d: x[%lld,%lld,%lld,%lld] w[%lld,%lld,%lld,%lld] algo %d ws %zu KiB\n",
++            (long long) input->ne[0], (long long) input->ne[1], (long long) input->ne[2], (long long) input->ne[3],
++            (long long) kernel->ne[0], (long long) kernel->ne[1], (long long) kernel->ne[2], (long long) kernel->ne[3],
++            (int) chosen, ws_bytes >> 10);
++    }
++    const float alpha = 1.0f, beta = 0.0f;
++    const cudnnStatus_t st = cudnnConvolutionForward(handle, &alpha, x_desc, input->data, w_desc, w_ptr, conv_desc,
++        chosen, ws.get(), ws_bytes, &beta, y_desc, dst->data);
++    checked(st);
++    checked(cudnnDestroyConvolutionDescriptor(conv_desc));
++    checked(cudnnDestroyFilterDescriptor(w_desc));
++    checked(cudnnDestroyTensorDescriptor(y_desc));
++    checked(cudnnDestroyTensorDescriptor(x_desc));
++    return true;
++}
++#endif // GGML_CUDA_CUDNN_CONV2D_F32
++
+ struct conv_params {
+     const int64_t IW, IH;
+     const int64_t OW, OH;
+@@ -335,6 +482,15 @@ static void conv2d_cuda_f32(const float * X_D, const float * K_D, float * Y_D, c
+ }
+ 
+ void ggml_cuda_op_conv2d(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
++#ifdef GGML_CUDA_CUDNN_CONV2D_F32
++    if (ggml_cuda_cudnn_conv2d_enabled() && dst->type == GGML_TYPE_F32 && dst->src[1]->type == GGML_TYPE_F32 &&
++        (dst->src[0]->type == GGML_TYPE_F32 || dst->src[0]->type == GGML_TYPE_F16) &&
++        ggml_is_contiguous(dst->src[0]) && ggml_is_contiguous(dst->src[1]) && ((const int32_t *) dst->op_params)[6] == 0) {
++        if (conv2d_cudnn_f32(ctx, dst)) {
++            return;
++        }
++    }
++#endif
+     const ggml_tensor * kernel = dst->src[0];
+     const ggml_tensor * input  = dst->src[1];
+     float *             K_D    = (float *) kernel->data;
